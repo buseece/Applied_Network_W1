@@ -1,0 +1,80 @@
+#!/bin/bash
+
+discoverychannel(){
+	#listen port 5000 
+	while true
+	do
+		local d_message=$(nc -l 5000) # Type | Source IP | Source Name  | Receiver IP | Receiver Name
+		local d_messageType=$(echo $d_message | cut -d';' -f1)
+		local d_receiverIP=$(echo $d_message | cut -d';' -f2)
+		local d_receiverName=$(echo $d_message | cut -d';' -f3)
+		#echo $d_message >> "chat_$d_receiverIP.txt"
+		if [ "$d_messageType" = "0" ];
+		then
+			#discover message is received, send ack message to 5001
+			echo "$d_receiverName is online (0)"
+			local d_ackMessage="1;$sourceIP;$sourceName;$d_receiverIP;$d_receiverName"
+			#echo $ackMessage
+			echo $d_ackMessage | nc -G 1 $d_receiverIP 5000 ##OR TO 5000?
+			echo "$d_receiverIP $d_receiverName" >> client_list.txt
+			delete_dup
+		elif [ "$d_messageType" = "1" ];
+		then
+			#someone acknowledged the message, add it to client list
+			echo "$d_receiverName is online (1)"
+			#local numberOfContacts=$(wc -l < client_list.txt)
+			#echo "$(($numberOfContacts+1)) $receiverIP $receiverName" >> client_list.txt ##write to newline
+			echo "$d_receiverIP $d_receiverName" >> client_list.txt ##write to newline
+			delete_dup
+		fi
+	done
+}
+
+
+getmessage(){
+	while true
+	do
+		local g_message=$(nc -l 5001) # Sender IP | Cypher | Payload
+		echo "Received a message"
+		local g_senderIP=$(echo $g_message | cut -d';' -f1)
+		local g_cypher=$(echo $g_message | cut -d';' -f2)
+		local g_payload=$(echo $g_message | cut -d';' -f3)
+		local g_senderNickName=$(findNickNameWithIP "$g_senderIP") #returns nickname of the sender
+		local g_saved_cypher="-1"
+		local aux=$(grep "$g_senderIP" client_cipher_list.txt)
+		if [ ${#aux} -ne 0 ]  ;		
+		then
+			g_saved_cypher=$(cat "client_cipher_list.txt" | grep -m1 "$g_senderIP" | cut -d" " -f2)
+			#echo "saveddddd: $g_saved_cypher or $g_saved_cypher"
+			g_encrypted_saved_cypher_md5=$(md5 -s $g_saved_cypher)
+			g_encrypted_saved_cypher=$(echo $g_encrypted_saved_cypher_md5 | cut -d" " -f4)
+			#echo "saved: $g_encrypted_saved_cypher"
+			#echo $g_message
+			local dene=$(echo $g_message | cut -d';' -f2)
+			#echo "dene is $dene"
+			if [ "$dene" = "$g_encrypted_saved_cypher" ];
+			then
+				echo "You have a new message from $g_senderNickName"
+				echo "$g_senderNickName: $g_payload" >> "chat_$g_senderIP.txt"
+				local line_number=$(grep -Fn -m1 "$g_senderIP" client_cipher_list.txt | cut -d':' -f1)
+				sed -i -e "${line_number},${line_number}d" client_cipher_list.txt
+				echo "$g_senderIP $g_cypher" >> "client_cipher_list.txt" #update the cypher
+			else
+				echo "Message from $g_senderNickName is not verified"
+			fi
+		else
+			echo "first message"
+			echo "$g_senderIP $g_cypher" >> "client_cipher_list.txt"
+			echo "You have a new message from $g_senderNickName"
+			echo "$g_senderNickName: $g_payload" >> "chat_$g_senderIP.txt"
+		fi
+	done
+}
+
+sourceIP=$(ifconfig en0 | grep "inet " | cut -d " " -f2 );
+localIP=$(ifconfig en0 | grep "inet " | cut -d " " -f2 | cut -d "." -f1-3);
+echo "enter your nickname"
+read sourceName
+touch client_cipher_list.txt
+touch client_list.txt
+discoverychannel &
